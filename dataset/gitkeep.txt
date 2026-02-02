@@ -1,0 +1,2 @@
+https://machinelearning.ee.uh.edu/2013-ieee-grss-data-fusion-contest/
+https://machinelearning.ee.uh.edu/2018-ieee-grss-data-fusion-challenge-fusion-of-multispectral-lidar-and-hyperspectral-data/

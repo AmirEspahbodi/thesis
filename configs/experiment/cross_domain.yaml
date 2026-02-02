@@ -1,0 +1,32 @@
+# @package _global_
+
+# Cross-Domain Experiment Configuration
+# Train on source dataset, test on target dataset
+
+strategy: cross_domain
+
+# Source dataset for training
+source_dataset:
+  file_name: Houston13.mat
+  gt_name: Houston13_7gt.mat
+  image_key: Houston13
+  gt_key: Houston13_7gt
+  n_bands: 144
+  target_bands: 30
+  ignored_labels: [0]
+  n_classes: 15
+
+# Target dataset for testing
+target_dataset:
+  file_name: Houston18.mat
+  gt_name: Houston18_7gt.mat
+  image_key: Houston18
+  gt_key: Houston18_7gt
+  n_bands: 48
+  target_bands: 30
+  ignored_labels: [0]
+  n_classes: 20
+
+experiment:
+  name: cross_domain_houston13_to_18
+  description: "Cross-domain transfer: Houston13 -> Houston18"

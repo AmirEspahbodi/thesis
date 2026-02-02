@@ -1,0 +1,13 @@
+# @package _global_
+
+# In-Domain Experiment Configuration
+# Train and test on the same dataset with disjoint pixel sets
+
+defaults:
+  - override /dataset: houston13
+
+strategy: in_domain
+
+experiment:
+  name: in_domain_houston13
+  description: "In-domain few-shot learning on Houston 2013"

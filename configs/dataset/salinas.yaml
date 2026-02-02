@@ -1,0 +1,9 @@
+# Salinas Dataset Configuration
+file_name: Salinas.mat
+gt_name: Salinas_gt.mat
+image_key: salinas
+gt_key: salinas_gt
+n_bands: 204
+target_bands: 30
+ignored_labels: [0]
+n_classes: 16  # Total classes (excluding background)
