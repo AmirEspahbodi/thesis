@@ -1,9 +1,9 @@
 # Houston 2018 Dataset Configuration
 file_name: Houston18.mat
 gt_name: Houston18_7gt.mat
-image_key: Houston18
-gt_key: Houston18_7gt
+image_key: ori_data
+gt_key: map
 n_bands: 48
 target_bands: 30
 ignored_labels: [0]
-n_classes: 20  # Total classes (excluding background)
+n_classes: 20 # Total classes (excluding background)
