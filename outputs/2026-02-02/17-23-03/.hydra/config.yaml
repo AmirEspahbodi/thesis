@@ -1,0 +1,46 @@
+dataset:
+  file_name: Houston13.mat
+  gt_name: Houston13_7gt.mat
+  image_key: Houston13
+  gt_key: Houston13_7gt
+  n_bands: 144
+  target_bands: 30
+  ignored_labels:
+  - 0
+  n_classes: 15
+seed: 42
+device: cuda
+model:
+  backbone:
+    name: Simple3DCNN
+    input_channels: 1
+    d_model: 128
+few_shot:
+  n_way: 5
+  k_shot: 5
+  query_shot: 15
+training:
+  epochs: 100
+  batch_size: 4
+  lr: 0.001
+  weight_decay: 0.0005
+  scheduler:
+    type: StepLR
+    step_size: 20
+    gamma: 0.5
+  early_stopping:
+    patience: 15
+    min_delta: 0.001
+data:
+  patch_size: 9
+  target_bands: 30
+  train_ratio: 0.1
+  val_ratio: 0.1
+strategy: in_domain
+paths:
+  data_root: D:/work/thesis/dataset
+  output_dir: outputs
+  checkpoint_dir: checkpoints
+logging:
+  log_interval: 10
+  save_best: true

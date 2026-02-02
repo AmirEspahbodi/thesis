@@ -9,13 +9,15 @@ Key features:
 """
 
 import os
-from typing import Tuple, List, Optional, Dict
+from typing import Dict, List, Optional, Tuple
+
+import h5py
 import numpy as np
 import torch
-from torch.utils.data import Dataset
 from scipy.io import loadmat
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
+from torch.utils.data import Dataset
 
 
 class HSIDataset(Dataset):
@@ -85,22 +87,33 @@ class HSIDataset(Dataset):
         self, file_name: str, gt_name: str, image_key: str, gt_key: str
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Load HSI image and ground truth from .mat files
-
-        Returns:
-            image: (H, W, C) numpy array
-            gt: (H, W) numpy array with class labels
+        Load HSI image and ground truth from .mat files.
+        Handles both standard .mat and v7.3 (HDF5) formats.
         """
         image_path = os.path.join(self.data_root, file_name)
         gt_path = os.path.join(self.data_root, gt_name)
 
-        # Load image data
-        image_mat = loadmat(image_path)
-        image = image_mat[image_key].astype(np.float32)
+        def load_mat_flexible(path: str, key: str) -> np.ndarray:
+            try:
+                # Try standard Scipy loader first (v7.2 and below)
+                data = loadmat(path)
+                return data[key].astype(
+                    np.float32 if "gt" not in key.lower() else np.int64
+                )
+            except (NotImplementedError, IsADirectoryError, ValueError):
+                print(
+                    f"  -> File {os.path.basename(path)} is v7.3 MAT. Using h5py loader..."
+                )
+                with h5py.File(path, "r") as f:
+                    # h5py loads data in (C, W, H) or (C, H) format; need to transpose
+                    data = np.array(f[key])
+                    if data.ndim == 3:
+                        return data.transpose(2, 1, 0).astype(np.float32)
+                    else:
+                        return data.transpose(1, 0).astype(np.int64)
 
-        # Load ground truth
-        gt_mat = loadmat(gt_path)
-        gt = gt_mat[gt_key].astype(np.int64)
+        image = load_mat_flexible(image_path, image_key)
+        gt = load_mat_flexible(gt_path, gt_key)
 
         # Ensure 2D ground truth
         if gt.ndim == 3:
