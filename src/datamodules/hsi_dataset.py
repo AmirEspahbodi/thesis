@@ -11,7 +11,6 @@ Key features:
 import os
 from typing import Dict, List, Optional, Tuple
 
-import h5py
 import numpy as np
 import torch
 from scipy.io import loadmat
@@ -45,10 +44,10 @@ class HSIDataset(Dataset):
     def __init__(
         self,
         data_root: str,
-        file_name: str,
-        gt_name: str,
-        image_key: str,
-        gt_key: str,
+        file_name: Optional[str],
+        gt_name: Optional[str],
+        image_key: Optional[str],
+        gt_key: Optional[str],
         patch_size: int = 9,
         target_bands: int = 30,
         ignored_labels: List[int] = [0],
@@ -62,17 +61,28 @@ class HSIDataset(Dataset):
         self.ignored_labels = ignored_labels
         self.padding = patch_size // 2
 
-        # Load data
-        self.image, self.gt = self._load_data(file_name, gt_name, image_key, gt_key)
+        # If file_name is provided, load and process data
+        if file_name is not None:
+            # Load data
+            self.image, self.gt = self._load_data(file_name, gt_name, image_key, gt_key)
 
-        # Apply PCA for spectral reduction
-        self.image = self._apply_pca(self.image, target_bands)
+            # Apply PCA for spectral reduction
+            self.image = self._apply_pca(self.image, target_bands)
 
-        # Pad image for boundary patches
-        self.image = self._pad_image(self.image)
+            # Pad image for boundary patches
+            self.image = self._pad_image(self.image)
 
-        # Get valid sample indices (non-background, labeled pixels)
-        self.valid_indices = self._get_valid_indices()
+            # Get valid sample indices (non-background, labeled pixels)
+            self.valid_indices = self._get_valid_indices()
+
+            # Create label mapping (ignore background/unlabeled)
+            self.label_map = self._create_label_map()
+        else:
+            # Placeholder initialization for cases where data is injected manually
+            self.image = None
+            self.gt = None
+            self.valid_indices = []
+            self.label_map = {}
 
         # Use provided indices if specified, otherwise use all valid indices
         if indices is not None:
@@ -80,40 +90,26 @@ class HSIDataset(Dataset):
         else:
             self.indices = self.valid_indices
 
-        # Create label mapping (ignore background/unlabeled)
-        self.label_map = self._create_label_map()
-
     def _load_data(
         self, file_name: str, gt_name: str, image_key: str, gt_key: str
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Load HSI image and ground truth from .mat files.
-        Handles both standard .mat and v7.3 (HDF5) formats.
+        Load HSI image and ground truth from .mat files
+
+        Returns:
+            image: (H, W, C) numpy array
+            gt: (H, W) numpy array with class labels
         """
         image_path = os.path.join(self.data_root, file_name)
         gt_path = os.path.join(self.data_root, gt_name)
 
-        def load_mat_flexible(path: str, key: str) -> np.ndarray:
-            try:
-                # Try standard Scipy loader first (v7.2 and below)
-                data = loadmat(path)
-                return data[key].astype(
-                    np.float32 if "gt" not in key.lower() else np.int64
-                )
-            except (NotImplementedError, IsADirectoryError, ValueError):
-                print(
-                    f"  -> File {os.path.basename(path)} is v7.3 MAT. Using h5py loader..."
-                )
-                with h5py.File(path, "r") as f:
-                    # h5py loads data in (C, W, H) or (C, H) format; need to transpose
-                    data = np.array(f[key])
-                    if data.ndim == 3:
-                        return data.transpose(2, 1, 0).astype(np.float32)
-                    else:
-                        return data.transpose(1, 0).astype(np.int64)
+        # Load image data
+        image_mat = loadmat(image_path)
+        image = image_mat[image_key].astype(np.float32)
 
-        image = load_mat_flexible(image_path, image_key)
-        gt = load_mat_flexible(gt_path, gt_key)
+        # Load ground truth
+        gt_mat = loadmat(gt_path)
+        gt = gt_mat[gt_key].astype(np.int64)
 
         # Ensure 2D ground truth
         if gt.ndim == 3:
@@ -183,6 +179,9 @@ class HSIDataset(Dataset):
         Returns:
             List of linear indices into flattened ground truth
         """
+        if self.gt is None:
+            return []
+
         valid_mask = np.ones_like(self.gt, dtype=bool)
 
         # Exclude ignored labels
@@ -201,6 +200,9 @@ class HSIDataset(Dataset):
         Returns:
             Dictionary mapping original_label -> class_index (0-based)
         """
+        if self.gt is None:
+            return {}
+
         unique_labels = np.unique(self.gt)
         valid_labels = [l for l in unique_labels if l not in self.ignored_labels]
         valid_labels = sorted(valid_labels)
