@@ -1,13 +1,3 @@
-"""
-Hyperspectral Image Dataset Module
-
-This module handles loading, preprocessing, and patch extraction from HSI .mat files.
-Key features:
-- PCA for spectral dimension reduction
-- Spatial padding for boundary patches
-- Efficient patch extraction with caching
-"""
-
 import os
 from typing import Dict, List, Optional, Tuple
 
@@ -23,23 +13,7 @@ from torch.utils.data import Dataset
 class HSIDataset(Dataset):
     """
     Hyperspectral Image Dataset for Few-Shot Learning
-
-    Handles:
-    1. Loading .mat files
-    2. PCA-based spectral reduction (n_bands -> target_bands)
-    3. Spatial padding for edge patches
-    4. Patch extraction centered at labeled pixels
-
-    Args:
-        data_root: Root directory containing .mat files
-        file_name: Name of the HSI data file (e.g., 'Houston13.mat')
-        gt_name: Name of the ground truth file
-        image_key: Key to access image data in .mat file
-        gt_key: Key to access ground truth in .mat file
-        patch_size: Spatial size of extracted patches (e.g., 9 for 9x9)
-        target_bands: Target number of spectral bands after PCA
-        ignored_labels: List of labels to ignore (usually [0] for background)
-        indices: Optional list of specific indices to use (for train/val/test split)
+    ... (Keep existing class definition unchanged) ...
     """
 
     def __init__(
@@ -79,7 +53,7 @@ class HSIDataset(Dataset):
             # Create label mapping (ignore background/unlabeled)
             self.label_map = self._create_label_map()
         else:
-            # Placeholder initialization for cases where data is injected manually
+            # Placeholder initialization
             self.image = None
             self.gt = None
             self.valid_indices = []
@@ -94,21 +68,15 @@ class HSIDataset(Dataset):
     def _load_data(
         self, file_name: str, gt_name: str, image_key: str, gt_key: str
     ) -> Tuple[np.ndarray, np.ndarray]:
-        """
-        Load HSI image and ground truth from .mat files.
-        Handles both standard .mat and v7.3 (HDF5) formats.
-        """
+        # ... (Keep existing implementation) ...
         image_path = os.path.join(self.data_root, file_name)
         gt_path = os.path.join(self.data_root, gt_name)
 
         def load_mat_flexible(path: str, key: str, is_gt: bool = False) -> np.ndarray:
-            """Helper to load data regardless of MAT version"""
             try:
-                # Try standard Scipy loader first (v7.2 and below)
                 data = loadmat(path)
                 arr = data[key]
             except (NotImplementedError, ValueError):
-                # Fallback to h5py for v7.3 files
                 print(
                     f"  -> File {os.path.basename(path)} is v7.3 MAT. Using h5py loader..."
                 )
@@ -118,195 +86,93 @@ class HSIDataset(Dataset):
                             f"Key '{key}' not found in {path}. Available keys: {list(f.keys())}"
                         )
                     arr = np.array(f[key])
-
-                    # h5py reads dimensions in (C, W, H) order for MATLAB matrices
-                    # We need to transpose them back to (H, W, C)
                     if arr.ndim == 3:
                         arr = arr.transpose(2, 1, 0)
                     elif arr.ndim == 2:
                         arr = arr.transpose(1, 0)
-
-            # Ensure correct data type
             if is_gt:
                 return arr.astype(np.int64)
             else:
                 return arr.astype(np.float32)
 
-        # Load image and ground truth with explicit type flags
         image = load_mat_flexible(image_path, image_key, is_gt=False)
         gt = load_mat_flexible(gt_path, gt_key, is_gt=True)
-
-        # Ensure 2D ground truth
         if gt.ndim == 3:
             gt = gt.squeeze()
-
         return image, gt
 
     def _apply_pca(self, image: np.ndarray, n_components: int) -> np.ndarray:
-        """
-        Apply PCA to reduce spectral dimensions
-
-        Args:
-            image: (H, W, C) array
-            n_components: Target number of spectral bands
-
-        Returns:
-            reduced_image: (H, W, n_components) array
-        """
+        # ... (Keep existing implementation) ...
         H, W, C = image.shape
-
-        # Skip PCA if already at target dimensions
         if C == n_components:
             return image
-
-        # Reshape to (H*W, C) for PCA
         image_2d = image.reshape(-1, C)
-
-        # Standardize before PCA
         scaler = StandardScaler()
         image_2d = scaler.fit_transform(image_2d)
-
-        # Apply PCA
         pca = PCA(n_components=n_components)
         image_pca = pca.fit_transform(image_2d)
-
-        # Reshape back to (H, W, n_components)
         image_pca = image_pca.reshape(H, W, n_components)
-
         print(
-            f"PCA: Reduced {C} bands to {n_components} bands "
-            f"(explained variance: {pca.explained_variance_ratio_.sum():.4f})"
+            f"PCA: Reduced {C} bands to {n_components} bands (explained variance: {pca.explained_variance_ratio_.sum():.4f})"
         )
-
         return image_pca.astype(np.float32)
 
     def _pad_image(self, image: np.ndarray) -> np.ndarray:
-        """
-        Pad image spatially to handle boundary patches
-
-        Args:
-            image: (H, W, C) array
-
-        Returns:
-            padded_image: (H+2*padding, W+2*padding, C) array
-        """
+        # ... (Keep existing implementation) ...
         pad_width = ((self.padding, self.padding), (self.padding, self.padding), (0, 0))
-
-        # Use edge padding (replicate border pixels)
         padded = np.pad(image, pad_width, mode="edge")
-
         return padded
 
     def _get_valid_indices(self) -> List[int]:
-        """
-        Get indices of all valid (labeled, non-background) pixels
-
-        Returns:
-            List of linear indices into flattened ground truth
-        """
+        # ... (Keep existing implementation) ...
         if self.gt is None:
             return []
-
         valid_mask = np.ones_like(self.gt, dtype=bool)
-
-        # Exclude ignored labels
         for label in self.ignored_labels:
             valid_mask &= self.gt != label
-
-        # Get linear indices
         valid_indices = np.where(valid_mask.ravel())[0].tolist()
-
         return valid_indices
 
     def _create_label_map(self) -> Dict[int, int]:
-        """
-        Create mapping from original labels to contiguous class indices
-
-        Returns:
-            Dictionary mapping original_label -> class_index (0-based)
-        """
+        # ... (Keep existing implementation) ...
         if self.gt is None:
             return {}
-
         unique_labels = np.unique(self.gt)
         valid_labels = [l for l in unique_labels if l not in self.ignored_labels]
         valid_labels = sorted(valid_labels)
-
         label_map = {label: idx for idx, label in enumerate(valid_labels)}
-
         return label_map
 
     def _extract_patch(self, x: int, y: int) -> torch.Tensor:
-        """
-        Extract a patch centered at (x, y) from the padded image
-
-        Args:
-            x, y: Center coordinates in the ORIGINAL (unpadded) image
-
-        Returns:
-            patch: (C, patch_size, patch_size) tensor
-        """
-        # Adjust coordinates for padding
+        # ... (Keep existing implementation) ...
         x_padded = x + self.padding
         y_padded = y + self.padding
-
-        # Extract patch
         patch = self.image[
             x_padded - self.padding : x_padded + self.padding + 1,
             y_padded - self.padding : y_padded + self.padding + 1,
             :,
         ]
-
-        # Convert to tensor and rearrange to (C, H, W)
         patch = torch.from_numpy(patch).permute(2, 0, 1)
-
         return patch
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int]:
-        """
-        Get a sample (patch, label) pair
-
-        Args:
-            idx: Index in self.indices
-
-        Returns:
-            patch: (C, patch_size, patch_size) tensor
-            label: Class index (0-based, after label mapping)
-        """
-        # Get linear index
+        # ... (Keep existing implementation) ...
         linear_idx = self.indices[idx]
-
-        # Convert to 2D coordinates
         H, W = self.gt.shape
         x = linear_idx // W
         y = linear_idx % W
-
-        # Get original label
         original_label = self.gt[x, y]
-
-        # Map to class index
         label = self.label_map[original_label]
-
-        # Extract patch
         patch = self._extract_patch(x, y)
-
         return patch, label
 
     def __len__(self) -> int:
-        """Return number of available samples"""
         return len(self.indices)
 
     def get_num_classes(self) -> int:
-        """Return number of classes (excluding background)"""
         return len(self.label_map)
 
     def get_class_counts(self) -> Dict[int, int]:
-        """
-        Get number of samples per class
-
-        Returns:
-            Dictionary mapping class_index -> count
-        """
         counts = {}
         for idx in self.indices:
             H, W = self.gt.shape
@@ -315,7 +181,6 @@ class HSIDataset(Dataset):
             original_label = self.gt[x, y]
             class_idx = self.label_map[original_label]
             counts[class_idx] = counts.get(class_idx, 0) + 1
-
         return counts
 
 
@@ -324,22 +189,26 @@ def create_data_splits(
     train_ratio: float = 0.1,
     val_ratio: float = 0.1,
     seed: int = 42,
+    strategy: str = "spatial_sort",  # New parameter to control split strategy
 ) -> Tuple[HSIDataset, HSIDataset, HSIDataset]:
     """
-    Split dataset into train/val/test sets for in-domain learning
+    Split dataset into train/val/test sets using Spatial Sorting to prevent leakage.
 
-    Splits are performed per-class to maintain class balance
+    Instead of random shuffling, we sort pixels spatially and split the sorted list.
+    This ensures train and test samples come from disjoint regions.
 
     Args:
-        dataset: The full dataset to split
-        train_ratio: Fraction of samples for training
-        val_ratio: Fraction of samples for validation
-        seed: Random seed for reproducibility
+        dataset: The full dataset
+        train_ratio: Fraction for training
+        val_ratio: Fraction for validation
+        seed: Random seed (used for class shuffling if needed, but not pixel shuffling)
+        strategy: 'random' (legacy) or 'spatial_sort' (recommended for HSI)
 
     Returns:
         train_dataset, val_dataset, test_dataset
     """
     np.random.seed(seed)
+    print(f"Data Split Strategy: {strategy.upper()}")
 
     # Group indices by class
     class_indices = {}
@@ -358,23 +227,35 @@ def create_data_splits(
     val_indices = []
     test_indices = []
 
-    # Split each class separately
     for class_idx, indices in class_indices.items():
         indices = np.array(indices)
-        np.random.shuffle(indices)
+
+        if strategy == "spatial_sort":
+            # SPATIAL SPLIT: Sort by spatial coordinate (Major axis: X, Minor axis: Y)
+            # This keeps spatially adjacent pixels together in the list
+            # Note: indices are linear = x * W + y, so standard sort works perfectly for row-major order
+            indices = np.sort(indices)
+
+            # Note: We do NOT shuffle here. We rely on the spatial sorting.
+
+        elif strategy == "random":
+            # LEGACY: Random shuffle (Prone to leakage!)
+            np.random.shuffle(indices)
 
         n_samples = len(indices)
         n_train = max(1, int(n_samples * train_ratio))
         n_val = max(1, int(n_samples * val_ratio))
 
+        # For spatial sort, this effectively takes the "top" part of the class cluster for train,
+        # the "middle" for val, and the "bottom" for test.
         train_indices.extend(indices[:n_train].tolist())
         val_indices.extend(indices[n_train : n_train + n_val].tolist())
         test_indices.extend(indices[n_train + n_val :].tolist())
 
-    # Create dataset objects with specific indices
+    # Create dataset objects (Rest of the function remains the same)
     train_dataset = HSIDataset(
         data_root=dataset.data_root,
-        file_name=None,  # Already loaded
+        file_name=None,
         gt_name=None,
         image_key=None,
         gt_key=None,
@@ -383,7 +264,7 @@ def create_data_splits(
         ignored_labels=dataset.ignored_labels,
         indices=train_indices,
     )
-    # Copy loaded data to avoid reloading
+    # Copy loaded data
     train_dataset.image = dataset.image
     train_dataset.gt = dataset.gt
     train_dataset.label_map = dataset.label_map
