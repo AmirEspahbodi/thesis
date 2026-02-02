@@ -7,26 +7,27 @@ This script supports both in-domain and cross-domain strategies:
 """
 
 import os
-import sys
 import random
+import sys
+
+import hydra
 import numpy as np
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader
-import hydra
 from omegaconf import DictConfig, OmegaConf
+from torch.utils.data import DataLoader
 
 # Add src to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
 from datamodules import (
-    HSIDataset,
-    create_data_splits,
     FewShotSampler,
+    HSIDataset,
     collate_few_shot_batch,
+    create_data_splits,
 )
-from models import Simple3DCNN, PrototypicalNetwork, count_parameters
-from engine import FewShotTrainer, FewShotEvaluator
+from engine import FewShotEvaluator, FewShotTrainer
+from models import PrototypicalNetwork, Simple3DCNN, count_parameters
 
 
 def set_seed(seed: int):
@@ -403,4 +404,18 @@ def main(cfg: DictConfig):
 
 
 if __name__ == "__main__":
+    import argparse
+    import sys
+
+    # FIX: Python 3.14 breaks Hydra's help argument.
+    # We force all help arguments to be strings before argparse sees them.
+    if sys.version_info >= (3, 14):
+        _orig_add_argument = argparse.ArgumentParser.add_argument
+
+        def _fixed_add_argument(self, *args, **kwargs):
+            if "help" in kwargs and not isinstance(kwargs["help"], str):
+                kwargs["help"] = str(kwargs["help"])
+            return _orig_add_argument(self, *args, **kwargs)
+
+        argparse.ArgumentParser.add_argument = _fixed_add_argument
     main()
