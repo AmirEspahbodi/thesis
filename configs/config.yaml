@@ -1,6 +1,6 @@
 # Main Configuration File
 defaults:
-  - dataset: houston13
+  - dataset: pavia_u
   - _self_
 
 # Global Training Parameters
@@ -12,18 +12,17 @@ model:
   backbone:
     name: Simple3DCNN
     input_channels: 1
-    d_model: 128  # Feature dimension output
-  
-# Few-Shot Learning Settings
+    d_model: 128 # Feature dimension output
+
 few_shot:
-  n_way: 5          # Number of classes per episode
-  k_shot: 5         # Support samples per class
-  query_shot: 15    # Query samples per class
-  
+  n_way: 5 # Number of classes per episode
+  k_shot: 5 # Support samples per class
+  query_shot: 15 # Query samples per class
+
 # Training Hyperparameters
 training:
   epochs: 100
-  batch_size: 4     # Number of episodes per batch
+  batch_size: 4 # Number of episodes per batch
   lr: 0.001
   weight_decay: 0.0005
   scheduler:
@@ -37,10 +36,10 @@ training:
 # Data Processing
 data:
   patch_size: 9
-  target_bands: 30  # After PCA reduction
-  train_ratio: 0.1  # For in-domain: % of samples for training
-  val_ratio: 0.1    # For in-domain: % of samples for validation
-  
+  target_bands: 30 # After PCA reduction
+  train_ratio: 0.1 # For in-domain: % of samples for training
+  val_ratio: 0.1 # For in-domain: % of samples for validation
+
 # Strategy: 'in_domain' or 'cross_domain'
 strategy: in_domain
 
@@ -52,5 +51,5 @@ paths:
 
 # Logging
 logging:
-  log_interval: 10  # Log every N episodes
+  log_interval: 10 # Log every N episodes
   save_best: true

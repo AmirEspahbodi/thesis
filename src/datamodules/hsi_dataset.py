@@ -12,8 +12,8 @@ from torch.utils.data import Dataset
 
 class HSIDataset(Dataset):
     """
-    Hyperspectral Image Dataset for Few-Shot Learning
-    ... (Keep existing class definition unchanged) ...
+    Hyperspectral Image Dataset for Few-Shot Learning.
+    Supports loading .mat files, PCA reduction, and spatial patch extraction.
     """
 
     def __init__(
@@ -36,39 +36,23 @@ class HSIDataset(Dataset):
         self.ignored_labels = ignored_labels
         self.padding = patch_size // 2
 
-        # If file_name is provided, load and process data
         if file_name is not None:
-            # Load data
             self.image, self.gt = self._load_data(file_name, gt_name, image_key, gt_key)
-
-            # Apply PCA for spectral reduction
             self.image = self._apply_pca(self.image, target_bands)
-
-            # Pad image for boundary patches
             self.image = self._pad_image(self.image)
-
-            # Get valid sample indices (non-background, labeled pixels)
             self.valid_indices = self._get_valid_indices()
-
-            # Create label mapping (ignore background/unlabeled)
             self.label_map = self._create_label_map()
         else:
-            # Placeholder initialization
             self.image = None
             self.gt = None
             self.valid_indices = []
             self.label_map = {}
 
-        # Use provided indices if specified, otherwise use all valid indices
-        if indices is not None:
-            self.indices = indices
-        else:
-            self.indices = self.valid_indices
+        self.indices = indices if indices is not None else self.valid_indices
 
     def _load_data(
         self, file_name: str, gt_name: str, image_key: str, gt_key: str
     ) -> Tuple[np.ndarray, np.ndarray]:
-        # ... (Keep existing implementation) ...
         image_path = os.path.join(self.data_root, file_name)
         gt_path = os.path.join(self.data_root, gt_name)
 
@@ -77,23 +61,15 @@ class HSIDataset(Dataset):
                 data = loadmat(path)
                 arr = data[key]
             except (NotImplementedError, ValueError):
-                print(
-                    f"  -> File {os.path.basename(path)} is v7.3 MAT. Using h5py loader..."
-                )
                 with h5py.File(path, "r") as f:
                     if key not in f:
-                        raise KeyError(
-                            f"Key '{key}' not found in {path}. Available keys: {list(f.keys())}"
-                        )
+                        raise KeyError(f"Key '{key}' not found in {path}.")
                     arr = np.array(f[key])
                     if arr.ndim == 3:
                         arr = arr.transpose(2, 1, 0)
                     elif arr.ndim == 2:
                         arr = arr.transpose(1, 0)
-            if is_gt:
-                return arr.astype(np.int64)
-            else:
-                return arr.astype(np.float32)
+            return arr.astype(np.int64 if is_gt else np.float32)
 
         image = load_mat_flexible(image_path, image_key, is_gt=False)
         gt = load_mat_flexible(gt_path, gt_key, is_gt=True)
@@ -102,7 +78,6 @@ class HSIDataset(Dataset):
         return image, gt
 
     def _apply_pca(self, image: np.ndarray, n_components: int) -> np.ndarray:
-        # ... (Keep existing implementation) ...
         H, W, C = image.shape
         if C == n_components:
             return image
@@ -111,60 +86,44 @@ class HSIDataset(Dataset):
         image_2d = scaler.fit_transform(image_2d)
         pca = PCA(n_components=n_components)
         image_pca = pca.fit_transform(image_2d)
-        image_pca = image_pca.reshape(H, W, n_components)
-        print(
-            f"PCA: Reduced {C} bands to {n_components} bands (explained variance: {pca.explained_variance_ratio_.sum():.4f})"
-        )
-        return image_pca.astype(np.float32)
+        return image_pca.reshape(H, W, n_components).astype(np.float32)
 
     def _pad_image(self, image: np.ndarray) -> np.ndarray:
-        # ... (Keep existing implementation) ...
         pad_width = ((self.padding, self.padding), (self.padding, self.padding), (0, 0))
-        padded = np.pad(image, pad_width, mode="edge")
-        return padded
+        return np.pad(image, pad_width, mode="edge")
 
     def _get_valid_indices(self) -> List[int]:
-        # ... (Keep existing implementation) ...
         if self.gt is None:
             return []
         valid_mask = np.ones_like(self.gt, dtype=bool)
         for label in self.ignored_labels:
             valid_mask &= self.gt != label
-        valid_indices = np.where(valid_mask.ravel())[0].tolist()
-        return valid_indices
+        return np.where(valid_mask.ravel())[0].tolist()
 
     def _create_label_map(self) -> Dict[int, int]:
-        # ... (Keep existing implementation) ...
         if self.gt is None:
             return {}
         unique_labels = np.unique(self.gt)
-        valid_labels = [l for l in unique_labels if l not in self.ignored_labels]
-        valid_labels = sorted(valid_labels)
-        label_map = {label: idx for idx, label in enumerate(valid_labels)}
-        return label_map
+        valid_labels = sorted(
+            [l for l in unique_labels if l not in self.ignored_labels]
+        )
+        return {label: idx for idx, label in enumerate(valid_labels)}
 
     def _extract_patch(self, x: int, y: int) -> torch.Tensor:
-        # ... (Keep existing implementation) ...
-        x_padded = x + self.padding
-        y_padded = y + self.padding
+        x_p, y_p = x + self.padding, y + self.padding
         patch = self.image[
-            x_padded - self.padding : x_padded + self.padding + 1,
-            y_padded - self.padding : y_padded + self.padding + 1,
+            x_p - self.padding : x_p + self.padding + 1,
+            y_p - self.padding : y_p + self.padding + 1,
             :,
         ]
-        patch = torch.from_numpy(patch).permute(2, 0, 1)
-        return patch
+        return torch.from_numpy(patch).permute(2, 0, 1)
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, int]:
-        # ... (Keep existing implementation) ...
         linear_idx = self.indices[idx]
-        H, W = self.gt.shape
-        x = linear_idx // W
-        y = linear_idx % W
-        original_label = self.gt[x, y]
-        label = self.label_map[original_label]
-        patch = self._extract_patch(x, y)
-        return patch, label
+        W = self.gt.shape[1]
+        x, y = linear_idx // W, linear_idx % W
+        label = self.label_map[self.gt[x, y]]
+        return self._extract_patch(x, y), label
 
     def __len__(self) -> int:
         return len(self.indices)
@@ -172,139 +131,136 @@ class HSIDataset(Dataset):
     def get_num_classes(self) -> int:
         return len(self.label_map)
 
-    def get_class_counts(self) -> Dict[int, int]:
-        counts = {}
-        for idx in self.indices:
-            H, W = self.gt.shape
-            x = idx // W
-            y = idx % W
-            original_label = self.gt[x, y]
-            class_idx = self.label_map[original_label]
-            counts[class_idx] = counts.get(class_idx, 0) + 1
-        return counts
-
 
 def create_data_splits(
     dataset: HSIDataset,
     train_ratio: float = 0.1,
     val_ratio: float = 0.1,
     seed: int = 42,
-    strategy: str = "spatial_sort",  # New parameter to control split strategy
+    strategy: str = "spatial_sort",
 ) -> Tuple[HSIDataset, HSIDataset, HSIDataset]:
     """
-    Split dataset into train/val/test sets using Spatial Sorting to prevent leakage.
+    Split dataset into train/val/test sets with spatial disjoint buffers to prevent leakage.
 
-    Instead of random shuffling, we sort pixels spatially and split the sorted list.
-    This ensures train and test samples come from disjoint regions.
-
-    Args:
-        dataset: The full dataset
-        train_ratio: Fraction for training
-        val_ratio: Fraction for validation
-        seed: Random seed (used for class shuffling if needed, but not pixel shuffling)
-        strategy: 'random' (legacy) or 'spatial_sort' (recommended for HSI)
-
-    Returns:
-        train_dataset, val_dataset, test_dataset
+    A safety buffer based on patch_size is enforced between sets. A candidate pixel is
+    only included if its Chebyshev distance from the previous set is >= patch_size.
     """
     np.random.seed(seed)
-    print(f"Data Split Strategy: {strategy.upper()}")
+    W = dataset.gt.shape[1]
+    patch_size = dataset.patch_size
 
     # Group indices by class
     class_indices = {}
     for idx in dataset.valid_indices:
-        H, W = dataset.gt.shape
-        x = idx // W
-        y = idx % W
-        original_label = dataset.gt[x, y]
-        class_idx = dataset.label_map[original_label]
+        x, y = idx // W, idx % W
+        class_idx = dataset.label_map[dataset.gt[x, y]]
+        class_indices.setdefault(class_idx, []).append(idx)
 
-        if class_idx not in class_indices:
-            class_indices[class_idx] = []
-        class_indices[class_idx].append(idx)
+    train_indices, val_indices, test_indices = [], [], []
 
-    train_indices = []
-    val_indices = []
-    test_indices = []
+    print(f"Data Split Strategy: {strategy.upper()} (Buffer Size: {patch_size})")
 
     for class_idx, indices in class_indices.items():
-        indices = np.array(indices)
+        indices = np.sort(np.array(indices))
 
-        if strategy == "spatial_sort":
-            # SPATIAL SPLIT: Sort by spatial coordinate (Major axis: X, Minor axis: Y)
-            # This keeps spatially adjacent pixels together in the list
-            # Note: indices are linear = x * W + y, so standard sort works perfectly for row-major order
-            indices = np.sort(indices)
-
-            # Note: We do NOT shuffle here. We rely on the spatial sorting.
-
-        elif strategy == "random":
-            # LEGACY: Random shuffle (Prone to leakage!)
+        if strategy == "random":
             np.random.shuffle(indices)
+            n_samples = len(indices)
+            n_train = max(1, int(n_samples * train_ratio))
+            n_val = max(1, int(n_samples * val_ratio))
 
+            train_indices.extend(indices[:n_train].tolist())
+            val_indices.extend(indices[n_train : n_train + n_val].tolist())
+            test_indices.extend(indices[n_train + n_val :].tolist())
+            continue
+
+        # Strategy: spatial_sort with Safety Buffers
         n_samples = len(indices)
-        n_train = max(1, int(n_samples * train_ratio))
-        n_val = max(1, int(n_samples * val_ratio))
+        n_train_target = max(1, int(n_samples * train_ratio))
+        n_val_target = max(1, int(n_samples * val_ratio))
 
-        # For spatial sort, this effectively takes the "top" part of the class cluster for train,
-        # the "middle" for val, and the "bottom" for test.
-        train_indices.extend(indices[:n_train].tolist())
-        val_indices.extend(indices[n_train : n_train + n_val].tolist())
-        test_indices.extend(indices[n_train + n_val :].tolist())
+        # 1. Select Training Set
+        c_train = indices[:n_train_target].tolist()
+        train_indices.extend(c_train)
 
-    # Create dataset objects (Rest of the function remains the same)
-    train_dataset = HSIDataset(
-        data_root=dataset.data_root,
-        file_name=None,
-        gt_name=None,
-        image_key=None,
-        gt_key=None,
-        patch_size=dataset.patch_size,
-        target_bands=dataset.target_bands,
-        ignored_labels=dataset.ignored_labels,
-        indices=train_indices,
+        remaining = indices[n_train_target:]
+        dropped_val_gap = 0
+
+        # 2. Find start of Validation Set (Gap Search)
+        last_train_idx = c_train[-1]
+        tx, ty = last_train_idx // W, last_train_idx % W
+
+        val_start_idx = 0
+        while val_start_idx < len(remaining):
+            vx, vy = remaining[val_start_idx] // W, remaining[val_start_idx] % W
+            if max(abs(tx - vx), abs(ty - vy)) >= patch_size:
+                break
+            val_start_idx += 1
+            dropped_val_gap += 1
+
+        remaining = remaining[val_start_idx:]
+
+        # 3. Select Validation Set
+        c_val = remaining[:n_val_target].tolist()
+        if not c_val:
+            print(f"Warning: Class {class_idx} Validation set is empty after buffer.")
+        val_indices.extend(c_val)
+
+        remaining = remaining[n_val_target:]
+        dropped_test_gap = 0
+
+        # 4. Find start of Test Set (Gap Search)
+        if c_val:
+            last_val_idx = c_val[-1]
+            vx, vy = last_val_idx // W, last_val_idx % W
+
+            test_start_idx = 0
+            while test_start_idx < len(remaining):
+                kx, ky = remaining[test_start_idx] // W, remaining[test_start_idx] % W
+                if max(abs(vx - kx), abs(vy - ky)) >= patch_size:
+                    break
+                test_start_idx += 1
+                dropped_test_gap += 1
+            remaining = remaining[test_start_idx:]
+
+        # 5. Select Test Set
+        c_test = remaining.tolist()
+        if not c_test:
+            print(f"Warning: Class {class_idx} Test set is empty after buffer.")
+        test_indices.extend(c_test)
+
+        print(
+            f"Class {class_idx:2d}: Dropped {dropped_val_gap:3d} (Val Gap), {dropped_test_gap:3d} (Test Gap) samples."
+        )
+
+    # Utility to clone dataset with specific indices
+    def _wrap(idx_list):
+        ds = HSIDataset(
+            dataset.data_root,
+            None,
+            None,
+            None,
+            None,
+            patch_size,
+            dataset.target_bands,
+            dataset.ignored_labels,
+            idx_list,
+        )
+        ds.image, ds.gt, ds.label_map, ds.valid_indices = (
+            dataset.image,
+            dataset.gt,
+            dataset.label_map,
+            dataset.valid_indices,
+        )
+        return ds
+
+    train_ds, val_ds, test_ds = (
+        _wrap(train_indices),
+        _wrap(val_indices),
+        _wrap(test_indices),
     )
-    # Copy loaded data
-    train_dataset.image = dataset.image
-    train_dataset.gt = dataset.gt
-    train_dataset.label_map = dataset.label_map
-    train_dataset.valid_indices = dataset.valid_indices
-
-    val_dataset = HSIDataset(
-        data_root=dataset.data_root,
-        file_name=None,
-        gt_name=None,
-        image_key=None,
-        gt_key=None,
-        patch_size=dataset.patch_size,
-        target_bands=dataset.target_bands,
-        ignored_labels=dataset.ignored_labels,
-        indices=val_indices,
-    )
-    val_dataset.image = dataset.image
-    val_dataset.gt = dataset.gt
-    val_dataset.label_map = dataset.label_map
-    val_dataset.valid_indices = dataset.valid_indices
-
-    test_dataset = HSIDataset(
-        data_root=dataset.data_root,
-        file_name=None,
-        gt_name=None,
-        image_key=None,
-        gt_key=None,
-        patch_size=dataset.patch_size,
-        target_bands=dataset.target_bands,
-        ignored_labels=dataset.ignored_labels,
-        indices=test_indices,
-    )
-    test_dataset.image = dataset.image
-    test_dataset.gt = dataset.gt
-    test_dataset.label_map = dataset.label_map
-    test_dataset.valid_indices = dataset.valid_indices
-
     print(
-        f"Data split - Train: {len(train_indices)}, "
-        f"Val: {len(val_indices)}, Test: {len(test_indices)}"
+        f"Split Summary - Train: {len(train_ds)}, Val: {len(val_ds)}, Test: {len(test_ds)}"
     )
 
-    return train_dataset, val_dataset, test_dataset
+    return train_ds, val_ds, test_ds
