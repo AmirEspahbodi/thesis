@@ -1,19 +1,13 @@
-"""
-Main Training Script for Few-Shot HSI Classification
-
-This script supports both in-domain and cross-domain strategies:
-- In-Domain: Train/Test on same dataset with disjoint pixel sets
-- Cross-Domain: Train on source dataset, test on target dataset
-"""
-
 import os
 import random
 import sys
+from functools import partial
 
 import hydra
 import numpy as np
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader
 
@@ -27,6 +21,7 @@ from datamodules import (
     create_collate_fn,
     create_data_splits,
 )
+from datamodules.hsi_dataset import fit_pca_on_indices
 from engine import FewShotEvaluator, FewShotTrainer
 from models import PrototypicalNetwork, Simple3DCNN, count_parameters
 
@@ -121,8 +116,6 @@ def create_in_domain_dataloaders(cfg: DictConfig):
     )
 
     # Create collate function with injected parameters (FIX #1)
-    from functools import partial
-
     collate_fn = partial(
         collate_few_shot_batch,
         n_way=cfg.few_shot.n_way,
@@ -297,15 +290,30 @@ def create_cross_domain_dataloaders(cfg: DictConfig):
 
     if C_tgt != C_src:
         print(f"\n  ⚠️  WARNING: Source has {C_src} bands, Target has {C_tgt} bands")
-        print(f"     Cross-domain PCA cannot be applied with different band counts.")
+        print(f"     Interpolating target spectral bands to match source...")
+
+        # Use PyTorch for interpolation (H, W, C) -> (H*W, 1, C)
+        img_tensor = torch.from_numpy(target_dataset_raw.image_raw).float()
+        img_tensor = img_tensor.reshape(
+            -1, 1, C_tgt
+        )  # Treat as (Batch, Channel, Length)
+
+        # Interpolate to C_src
+        img_interpolated = F.interpolate(
+            img_tensor, size=C_src, mode="linear", align_corners=False
+        )
+
+        # Reshape back to (H, W, C_src)
+        target_dataset_raw.image_raw = img_interpolated.reshape(
+            H_tgt, W_tgt, C_src
+        ).numpy()
+
         print(
-            f"     Consider using raw bands (no PCA) or interpolating target to source bands."
+            f"  ✓ Interpolated target bands from {C_tgt} to {C_src} to match source PCA."
         )
-        raise ValueError(
-            f"Cross-domain PCA incompatibility: Source ({C_src} bands) != Target ({C_tgt} bands). "
-            f"Options: (1) Use datasets with same band count, (2) Implement band interpolation, "
-            f"(3) Use apply_pca=False in config."
-        )
+
+        # Update C_tgt to match new dimension so subsequent code uses correct shape
+        C_tgt = C_src
 
     # Apply SOURCE PCA to target
     print(f"\n  Applying SOURCE PCA to target dataset...")
@@ -362,8 +370,6 @@ def create_cross_domain_dataloaders(cfg: DictConfig):
     )
 
     # Create dataloaders with FIXED collate function
-    from functools import partial
-
     collate_fn = partial(
         collate_few_shot_batch,
         n_way=cfg.few_shot.n_way,
