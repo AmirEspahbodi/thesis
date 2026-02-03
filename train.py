@@ -24,6 +24,7 @@ from datamodules import (
     FewShotSampler,
     HSIDataset,
     collate_few_shot_batch,
+    create_collate_fn,
     create_data_splits,
 )
 from engine import FewShotEvaluator, FewShotTrainer
@@ -44,6 +45,8 @@ def create_in_domain_dataloaders(cfg: DictConfig):
     """
     Create dataloaders for in-domain strategy
 
+    FIX #2: Uses create_data_splits which prevents PCA leakage
+
     Returns:
         train_loader, val_loader, test_loader, n_classes
     """
@@ -51,7 +54,7 @@ def create_in_domain_dataloaders(cfg: DictConfig):
     print("Creating IN-DOMAIN Dataloaders")
     print("=" * 60)
 
-    # Load full dataset
+    # Load full dataset WITHOUT PCA
     full_dataset = HSIDataset(
         data_root=cfg.paths.data_root,
         file_name=cfg.dataset.file_name,
@@ -61,6 +64,7 @@ def create_in_domain_dataloaders(cfg: DictConfig):
         patch_size=cfg.data.patch_size,
         target_bands=cfg.data.target_bands,
         ignored_labels=cfg.dataset.ignored_labels,
+        pca_transformer=None,  # Don't apply PCA yet
     )
 
     n_classes = full_dataset.get_num_classes()
@@ -68,7 +72,7 @@ def create_in_domain_dataloaders(cfg: DictConfig):
     print(f"Number of classes: {n_classes}")
     print(f"Total samples: {len(full_dataset)}")
 
-    # Split into train/val/test
+    # Split with leak-free PCA
     train_dataset, val_dataset, test_dataset = create_data_splits(
         full_dataset,
         train_ratio=cfg.data.train_ratio,
@@ -116,11 +120,21 @@ def create_in_domain_dataloaders(cfg: DictConfig):
         n_episodes=n_test_episodes,
     )
 
+    # Create collate function with injected parameters (FIX #1)
+    from functools import partial
+
+    collate_fn = partial(
+        collate_few_shot_batch,
+        n_way=cfg.few_shot.n_way,
+        k_shot=cfg.few_shot.k_shot,
+        query_shot=cfg.few_shot.query_shot,
+    )
+
     # Create dataloaders
     train_loader = DataLoader(
         train_dataset,
         batch_sampler=train_sampler,
-        collate_fn=collate_few_shot_batch,
+        collate_fn=collate_fn,
         num_workers=0,
         pin_memory=True,
     )
@@ -128,7 +142,7 @@ def create_in_domain_dataloaders(cfg: DictConfig):
     val_loader = DataLoader(
         val_dataset,
         batch_sampler=val_sampler,
-        collate_fn=collate_few_shot_batch,
+        collate_fn=collate_fn,
         num_workers=0,
         pin_memory=True,
     )
@@ -136,7 +150,7 @@ def create_in_domain_dataloaders(cfg: DictConfig):
     test_loader = DataLoader(
         test_dataset,
         batch_sampler=test_sampler,
-        collate_fn=collate_few_shot_batch,
+        collate_fn=collate_fn,
         num_workers=0,
         pin_memory=True,
     )
@@ -146,7 +160,10 @@ def create_in_domain_dataloaders(cfg: DictConfig):
 
 def create_cross_domain_dataloaders(cfg: DictConfig):
     """
-    Create dataloaders for cross-domain strategy
+    Create dataloaders for cross-domain strategy with COMPATIBLE PCA.
+
+    FIX #3: Ensures source and target datasets use the SAME PCA basis
+    for compatible feature spaces.
 
     Returns:
         train_loader, val_loader, test_loader, n_classes_source, n_classes_target
@@ -155,9 +172,11 @@ def create_cross_domain_dataloaders(cfg: DictConfig):
     print("Creating CROSS-DOMAIN Dataloaders")
     print("=" * 60)
 
-    # Load source dataset (for training)
+    # === Load Source Dataset (RAW - no PCA yet) ===
     source_cfg = cfg.source_dataset
-    source_dataset = HSIDataset(
+    print(f"\nLoading SOURCE dataset: {source_cfg.file_name}")
+
+    source_dataset_raw = HSIDataset(
         data_root=cfg.paths.data_root,
         file_name=source_cfg.file_name,
         gt_name=source_cfg.gt_name,
@@ -166,24 +185,97 @@ def create_cross_domain_dataloaders(cfg: DictConfig):
         patch_size=cfg.data.patch_size,
         target_bands=cfg.data.target_bands,
         ignored_labels=source_cfg.ignored_labels,
+        pca_transformer=None,  # Will fit below
     )
 
-    n_classes_source = source_dataset.get_num_classes()
-    print(f"Source Dataset: {source_cfg.file_name}")
-    print(f"Source classes: {n_classes_source}")
-    print(f"Source samples: {len(source_dataset)}")
+    n_classes_source = source_dataset_raw.get_num_classes()
+    print(f"  Source classes: {n_classes_source}")
+    print(f"  Source samples: {len(source_dataset_raw)}")
+    print(f"  Source bands: {source_dataset_raw.image_raw.shape[2]}")
 
-    # Split source for train/val
-    train_dataset, val_dataset, _ = create_data_splits(
-        source_dataset,
-        train_ratio=0.8,  # Use more data for training in cross-domain
-        val_ratio=0.2,
-        seed=cfg.seed,
+    # === FIX #3: Fit PCA on SOURCE dataset ===
+    print(f"\nFIX #3: Fitting PCA on SOURCE dataset for cross-domain compatibility")
+
+    # Get all source indices for PCA fitting
+    source_indices = source_dataset_raw.valid_indices
+
+    # Fit PCA on source
+    scaler_source, pca_source = fit_pca_on_indices(
+        image=source_dataset_raw.image_raw,
+        indices=source_indices,
+        gt_shape=source_dataset_raw.gt.shape,
+        target_bands=cfg.data.target_bands,
     )
 
-    # Load target dataset (for testing)
+    pca_transformer = (scaler_source, pca_source)
+
+    # Apply PCA to source dataset
+    H_src, W_src, C_src = source_dataset_raw.image_raw.shape
+    source_2d = source_dataset_raw.image_raw.reshape(-1, C_src)
+    source_2d = scaler_source.transform(source_2d)
+    source_pca = pca_source.transform(source_2d)
+    source_transformed = source_pca.reshape(H_src, W_src, cfg.data.target_bands).astype(
+        np.float32
+    )
+
+    # Update source dataset with transformed image
+    source_dataset_raw.image = source_dataset_raw._pad_image(source_transformed)
+    source_dataset_raw.pca_transformer = pca_transformer
+
+    # Split source for train/val (using already-transformed data)
+    # We need to split WITHOUT refitting PCA
+    print(f"\nSplitting source dataset (80% train, 20% val)...")
+
+    # Manual split since source is already PCA-transformed
+    np.random.seed(cfg.seed)
+    source_class_indices = {}
+    for idx in source_dataset_raw.valid_indices:
+        x, y = (
+            idx // source_dataset_raw.gt.shape[1],
+            idx % source_dataset_raw.gt.shape[1],
+        )
+        class_idx = source_dataset_raw.label_map[source_dataset_raw.gt[x, y]]
+        source_class_indices.setdefault(class_idx, []).append(idx)
+
+    train_indices = []
+    val_indices = []
+
+    for class_idx, indices in source_class_indices.items():
+        indices = np.array(indices)
+        np.random.shuffle(indices)
+        n_train = int(len(indices) * 0.8)
+        train_indices.extend(indices[:n_train].tolist())
+        val_indices.extend(indices[n_train:].tolist())
+
+    def _wrap_source(idx_list):
+        ds = HSIDataset(
+            source_dataset_raw.data_root,
+            None,
+            None,
+            None,
+            None,
+            source_dataset_raw.patch_size,
+            source_dataset_raw.target_bands,
+            source_dataset_raw.ignored_labels,
+            idx_list,
+            pca_transformer=pca_transformer,
+        )
+        ds.image_raw = source_dataset_raw.image_raw
+        ds.image = source_dataset_raw.image
+        ds.gt = source_dataset_raw.gt
+        ds.label_map = source_dataset_raw.label_map
+        ds.valid_indices = source_dataset_raw.valid_indices
+        return ds
+
+    train_dataset = _wrap_source(train_indices)
+    val_dataset = _wrap_source(val_indices)
+
+    # === Load Target Dataset and Apply SAME PCA ===
     target_cfg = cfg.target_dataset
-    target_dataset = HSIDataset(
+    print(f"\nLoading TARGET dataset: {target_cfg.file_name}")
+
+    # Load raw target
+    target_dataset_raw = HSIDataset(
         data_root=cfg.paths.data_root,
         file_name=target_cfg.file_name,
         gt_name=target_cfg.gt_name,
@@ -192,12 +284,42 @@ def create_cross_domain_dataloaders(cfg: DictConfig):
         patch_size=cfg.data.patch_size,
         target_bands=cfg.data.target_bands,
         ignored_labels=target_cfg.ignored_labels,
+        pca_transformer=None,
     )
 
-    n_classes_target = target_dataset.get_num_classes()
-    print(f"Target Dataset: {target_cfg.file_name}")
-    print(f"Target classes: {n_classes_target}")
-    print(f"Target samples: {len(target_dataset)}")
+    n_classes_target = target_dataset_raw.get_num_classes()
+    print(f"  Target classes: {n_classes_target}")
+    print(f"  Target samples: {len(target_dataset_raw)}")
+    print(f"  Target bands: {target_dataset_raw.image_raw.shape[2]}")
+
+    # Check band compatibility
+    H_tgt, W_tgt, C_tgt = target_dataset_raw.image_raw.shape
+
+    if C_tgt != C_src:
+        print(f"\n  ⚠️  WARNING: Source has {C_src} bands, Target has {C_tgt} bands")
+        print(f"     Cross-domain PCA cannot be applied with different band counts.")
+        print(
+            f"     Consider using raw bands (no PCA) or interpolating target to source bands."
+        )
+        raise ValueError(
+            f"Cross-domain PCA incompatibility: Source ({C_src} bands) != Target ({C_tgt} bands). "
+            f"Options: (1) Use datasets with same band count, (2) Implement band interpolation, "
+            f"(3) Use apply_pca=False in config."
+        )
+
+    # Apply SOURCE PCA to target
+    print(f"\n  Applying SOURCE PCA to target dataset...")
+    target_2d = target_dataset_raw.image_raw.reshape(-1, C_tgt)
+    target_2d = scaler_source.transform(target_2d)  # Use SOURCE scaler
+    target_pca = pca_source.transform(target_2d)  # Use SOURCE PCA
+    target_transformed = target_pca.reshape(H_tgt, W_tgt, cfg.data.target_bands).astype(
+        np.float32
+    )
+
+    target_dataset_raw.image = target_dataset_raw._pad_image(target_transformed)
+    target_dataset_raw.pca_transformer = pca_transformer  # Same as source
+
+    print(f"  ✓ Source and target now share SAME PCA basis (compatible feature space)")
 
     # Calculate episodes
     n_train_episodes = max(
@@ -207,11 +329,11 @@ def create_cross_domain_dataloaders(cfg: DictConfig):
         50, len(val_dataset) // (cfg.few_shot.n_way * cfg.few_shot.k_shot)
     )
     n_test_episodes = max(
-        100, len(target_dataset) // (cfg.few_shot.n_way * cfg.few_shot.k_shot)
+        100, len(target_dataset_raw) // (cfg.few_shot.n_way * cfg.few_shot.k_shot)
     )
 
     print(
-        f"Episodes - Train: {n_train_episodes}, Val: {n_val_episodes}, Test: {n_test_episodes}"
+        f"\nEpisodes - Train: {n_train_episodes}, Val: {n_val_episodes}, Test: {n_test_episodes}"
     )
 
     # Create samplers
@@ -232,18 +354,27 @@ def create_cross_domain_dataloaders(cfg: DictConfig):
     )
 
     test_sampler = FewShotSampler(
-        target_dataset,
+        target_dataset_raw,
         n_way=cfg.few_shot.n_way,
         k_shot=cfg.few_shot.k_shot,
         query_shot=cfg.few_shot.query_shot,
         n_episodes=n_test_episodes,
     )
 
-    # Create dataloaders
+    # Create dataloaders with FIXED collate function
+    from functools import partial
+
+    collate_fn = partial(
+        collate_few_shot_batch,
+        n_way=cfg.few_shot.n_way,
+        k_shot=cfg.few_shot.k_shot,
+        query_shot=cfg.few_shot.query_shot,
+    )
+
     train_loader = DataLoader(
         train_dataset,
         batch_sampler=train_sampler,
-        collate_fn=collate_few_shot_batch,
+        collate_fn=collate_fn,
         num_workers=0,
         pin_memory=True,
     )
@@ -251,15 +382,15 @@ def create_cross_domain_dataloaders(cfg: DictConfig):
     val_loader = DataLoader(
         val_dataset,
         batch_sampler=val_sampler,
-        collate_fn=collate_few_shot_batch,
+        collate_fn=collate_fn,
         num_workers=0,
         pin_memory=True,
     )
 
     test_loader = DataLoader(
-        target_dataset,
+        target_dataset_raw,
         batch_sampler=test_sampler,
-        collate_fn=collate_few_shot_batch,
+        collate_fn=collate_fn,
         num_workers=0,
         pin_memory=True,
     )

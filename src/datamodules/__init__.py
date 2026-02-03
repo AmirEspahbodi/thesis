@@ -5,6 +5,7 @@ from src.datamodules.samplers import (
     EpisodeBatchSampler,
     FewShotSampler,
     collate_few_shot_batch,
+    create_collate_fn,  # NEW
 )
 
 __all__ = [
@@ -12,5 +13,6 @@ __all__ = [
     "create_data_splits",
     "FewShotSampler",
     "collate_few_shot_batch",
+    "create_collate_fn",  # NEW
     "EpisodeBatchSampler",
 ]
