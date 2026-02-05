@@ -1,347 +1,287 @@
-# Few-Shot Hyperspectral Image Classification Framework
+# Hyperspectral Image Few-Shot Classification Framework
 
-A production-ready PyTorch framework for Few-Shot Hyperspectral Image (HSI) Classification using Prototypical Networks with 3D-CNN backbone.
+A production-grade, modular Python framework for **Few-Shot Learning (FSL)** on **Hyperspectral Images (HSI)** using **Prototypical Networks** and **3D-CNN** backbones.
 
-## Features
+## 🎯 Overview
 
-- ✅ **Clean Architecture**: Modular design following SOLID principles
-- ✅ **Prototypical Networks**: State-of-the-art few-shot learning algorithm
-- ✅ **3D-CNN Backbone**: Spatial-spectral feature extraction
-- ✅ **PCA Preprocessing**: Automatic spectral dimension reduction
-- ✅ **Dual Strategies**: In-domain and cross-domain learning
-- ✅ **Hydra Configuration**: Flexible experiment management
-- ✅ **Comprehensive Metrics**: OA, AA, and Kappa coefficient
-- ✅ **16GB VRAM Optimized**: Efficient memory usage
+This framework implements a complete pipeline for few-shot classification of hyperspectral remote sensing data, following Clean Architecture principles and industry best practices.
 
-## Project Structure
+### Key Features
+
+- ✅ **Modular Architecture**: Clean separation of concerns across data, models, training, and utilities
+- ✅ **3D-CNN Backbone**: Optimized for spatial-spectral feature extraction from HSI cubes
+- ✅ **Prototypical Networks**: Meta-learning approach for few-shot classification
+- ✅ **Episodic Sampling**: Proper N-way K-shot task generation with no data leakage
+- ✅ **Remote Sensing Metrics**: OA, AA, and Kappa coefficient
+- ✅ **Type Hints & Docstrings**: Comprehensive documentation throughout
+- ✅ **Reproducibility**: Seed management for consistent results
+- ✅ **Production Ready**: Error handling, logging, checkpointing
+
+## 📁 Project Structure
 
 ```
-project_root/
+hsi_fewshot/
 ├── configs/
-│   ├── config.yaml              # Main configuration
-│   ├── dataset/                 # Dataset-specific configs
-│   │   ├── houston13.yaml
-│   │   ├── houston18.yaml
-│   │   ├── indian_pines.yaml
-│   │   ├── pavia_u.yaml
-│   │   └── salinas.yaml
-│   └── experiment/              # Experiment configs
-│       ├── in_domain.yaml
-│       └── cross_domain.yaml
+│   ├── __init__.py
+│   └── config.py              # Configuration dataclasses
 ├── src/
-│   ├── datamodules/
-│   │   ├── hsi_dataset.py       # Dataset loader with PCA
-│   │   └── samplers.py          # Few-shot episodic sampler
+│   ├── __init__.py
+│   ├── data/
+│   │   ├── __init__.py
+│   │   ├── loader.py          # HSI data loading & preprocessing
+│   │   └── dataset.py         # PyTorch datasets & episodic sampler
 │   ├── models/
-│   │   ├── backbone.py          # 3D-CNN feature extractor
-│   │   └── protonet.py          # Prototypical Network
+│   │   ├── __init__.py
+│   │   ├── backbone.py        # 3D-CNN feature extractor
+│   │   └── protonet.py        # Prototypical Network
 │   ├── utils/
-│   │   └── metrics.py           # Evaluation metrics
-│   └── engine.py                # Training and evaluation
-├── train.py                     # Main entry point
-└── requirements.txt
+│   │   ├── __init__.py
+│   │   ├── metrics.py         # Classification metrics (OA, AA, Kappa)
+│   │   └── helpers.py         # Logging, checkpointing, utilities
+│   └── training/
+│       ├── __init__.py
+│       └── trainer.py         # Training engine
+├── main.py                    # Entry point
+├── requirements.txt           # Dependencies
+└── README.md                  # This file
 ```
 
-## Installation
+## 🚀 Quick Start
 
-### 1. Prerequisites
-- Python 3.8+
-- CUDA-capable GPU (recommended)
-- 16GB+ VRAM
-
-### 2. Setup Environment
+### Installation
 
 ```bash
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
+# Clone or download the project
+cd hsi_fewshot
 
 # Install dependencies
 pip install -r requirements.txt
 ```
 
-## Dataset Setup
+### Data Preparation
 
-Place your HSI datasets in the following structure:
+Place your hyperspectral data (`.mat` format) in a `data/` directory:
 
 ```
-D:/work/thesis/dataset/
-├── Houston13.mat
-├── Houston13_7gt.mat
-├── Houston18.mat
-├── Houston18_7gt.mat
-├── Indian_pines.mat
-├── Indian_pines_gt.mat
-├── PaviaU.mat
-├── PaviaU_gt.mat
-├── Salinas.mat
-└── Salinas_gt.mat
+data/
+├── Indian_pines_corrected.mat
+├── Pavia_University.mat
+└── Houston.mat
 ```
 
-**Note**: If your data is in a different location, update `paths.data_root` in `configs/config.yaml`.
+Expected `.mat` file structure:
+- HSI cube: `(Height, Width, Bands)` - e.g., `(145, 145, 200)`
+- Ground truth: `(Height, Width)` - integer labels
 
-## Usage
-
-### Basic Training
-
-#### In-Domain Learning (Train/Test on same dataset)
+### Basic Usage
 
 ```bash
-# Train on Houston 2013
-python train.py dataset=houston13
+# Run with default configuration
+python main.py
 
-# Train on Indian Pines
-python train.py dataset=indian_pines
-
-# Train on Salinas
-python train.py dataset=salinas
+# Custom parameters
+python main.py --data_path data/Pavia_University.mat \
+               --n_way 5 \
+               --k_shot 5 \
+               --num_epochs 50 \
+               --device cuda
 ```
 
-#### Cross-Domain Learning (Transfer learning)
-
-```bash
-# Houston13 -> Houston18
-python train.py experiment=cross_domain
-
-# Custom cross-domain (modify configs/experiment/cross_domain.yaml)
-```
-
-### Advanced Configuration
-
-#### Change Few-Shot Settings
-
-```bash
-# 5-way 1-shot
-python train.py few_shot.k_shot=1
-
-# 10-way 5-shot
-python train.py few_shot.n_way=10 few_shot.k_shot=5
-
-# More query samples
-python train.py few_shot.query_shot=20
-```
-
-#### Modify Training Parameters
-
-```bash
-# Longer training
-python train.py training.epochs=150
-
-# Adjust learning rate
-python train.py training.lr=0.0005
-
-# Change batch size
-python train.py training.batch_size=8
-```
-
-#### Model Architecture
-
-```bash
-# Larger feature dimension
-python train.py model.backbone.d_model=256
-
-# Different patch size
-python train.py data.patch_size=11
-
-# More/fewer PCA components
-python train.py data.target_bands=50
-```
-
-### Multiple Configurations
-
-```bash
-# Combine multiple overrides
-python train.py \
-    dataset=indian_pines \
-    few_shot.n_way=5 \
-    few_shot.k_shot=1 \
-    training.epochs=100 \
-    training.lr=0.001
-```
-
-## Configuration Details
-
-### Main Config (`configs/config.yaml`)
-
-| Parameter | Description | Default |
-|-----------|-------------|---------|
-| `few_shot.n_way` | Classes per episode | 5 |
-| `few_shot.k_shot` | Support samples per class | 5 |
-| `few_shot.query_shot` | Query samples per class | 15 |
-| `data.patch_size` | Spatial patch size | 9 |
-| `data.target_bands` | Spectral bands after PCA | 30 |
-| `training.epochs` | Training epochs | 100 |
-| `training.lr` | Learning rate | 0.001 |
-
-### Dataset Config Example (`configs/dataset/houston13.yaml`)
-
-```yaml
-file_name: Houston13.mat
-gt_name: Houston13_7gt.mat
-image_key: Houston13
-gt_key: Houston13_7gt
-n_bands: 144
-target_bands: 30
-ignored_labels: [0]
-n_classes: 15
-```
-
-## Output Structure
-
-After training, the following files are generated:
+### Command Line Arguments
 
 ```
-outputs/
-└── YYYY-MM-DD/
-    └── HH-MM-SS/
-        └── results.txt          # Final test metrics
-
-checkpoints/
-└── best_model.pth               # Best model checkpoint
+--data_path     Path to HSI .mat file (default: data/Indian_pines_corrected.mat)
+--n_way         Number of classes per episode (default: 5)
+--k_shot        Support samples per class (default: 5)
+--num_epochs    Number of training epochs (default: 50)
+--seed          Random seed (default: 42)
+--device        Device: 'cuda' or 'cpu' (default: auto-detect)
 ```
 
-## Model Architecture
+## 🧠 Technical Details
 
-### 3D-CNN Backbone
+### Data Pipeline
 
-```
-Input: (B, 1, 30, 9, 9)
-    ↓
-Conv3D(1→8) + BN + ReLU
-    ↓ (B, 8, 12, 9, 9)
-Conv3D(8→16) + BN + ReLU
-    ↓ (B, 16, 8, 9, 9)
-Conv3D(16→32) + BN + ReLU
-    ↓ (B, 32, 5, 9, 9)
-GlobalAvgPool3D
-    ↓ (B, 32, 1, 1, 1)
-FC(32→128)
-    ↓
-Output: (B, 128)
-```
+1. **Loading**: Reads HSI cube and ground truth from `.mat` files
+2. **PCA**: Reduces spectral bands (e.g., 200 → 30) while preserving variance
+3. **Normalization**: Min-Max or Z-score normalization
+4. **Patching**: Extracts 3D spatial-spectral cubes (e.g., 9×9×30) with boundary padding
 
-### Prototypical Network
+### Model Architecture
 
-1. **Feature Extraction**: Extract features from support and query sets
-2. **Prototype Computation**: Compute class prototypes (mean of support features)
-3. **Distance Calculation**: Calculate Euclidean distance between queries and prototypes
-4. **Classification**: Assign query to nearest prototype
+#### 3D-CNN Backbone
+- **Input**: `(Batch, 1, Spectral_Depth, Height, Width)`
+- **Architecture**: Stacked `Conv3D → BatchNorm → ReLU → MaxPool3D`
+- **Output**: Fixed-dimensional embeddings (e.g., 256-D)
 
-## Evaluation Metrics
+#### Prototypical Network
+- **Support Set**: Computes class prototypes (mean embeddings)
+- **Query Set**: Classifies based on Euclidean distance to prototypes
+- **Loss**: Cross-entropy on negative distances
 
-The framework computes the following metrics:
+### Few-Shot Setup
 
-- **Overall Accuracy (OA)**: Percentage of correctly classified samples
-- **Average Accuracy (AA)**: Mean of per-class accuracies (handles class imbalance)
-- **Kappa Coefficient**: Agreement measure accounting for chance
-- **Per-Class Accuracy**: Individual accuracy for each class
+**Domain Disjoint Split**:
+- **Source Domain**: Classes used for training (e.g., first 60%)
+- **Target Domain**: Classes used for testing (e.g., remaining 40%)
+- No overlap between source and target classes
 
-## Memory Optimization
+**Episode Structure**:
+- **N-way**: Number of classes (e.g., 5)
+- **K-shot**: Support samples per class (e.g., 5)
+- **Q-query**: Query samples per class (e.g., 15)
 
-The framework is optimized for 16GB VRAM:
+### Evaluation Metrics
 
-- Efficient 3D-CNN architecture (lightweight layers)
-- Batch size of 4 episodes
-- PCA reduces spectral dimensions (200+ → 30 bands)
-- Small patch size (9×9)
-- No gradient accumulation needed
+1. **Overall Accuracy (OA)**: `correct_samples / total_samples`
+2. **Average Accuracy (AA)**: Mean of per-class accuracies
+3. **Kappa Coefficient (κ)**: Agreement accounting for chance
 
-If you encounter OOM errors:
-```bash
-# Reduce batch size
-python train.py training.batch_size=2
+## 📊 Configuration
 
-# Smaller feature dimension
-python train.py model.backbone.d_model=64
-
-# Fewer PCA components
-python train.py data.target_bands=20
-```
-
-## Extending the Framework
-
-### Adding a New Dataset
-
-1. Create config file: `configs/dataset/my_dataset.yaml`
-```yaml
-file_name: MyDataset.mat
-gt_name: MyDataset_gt.mat
-image_key: my_data
-gt_key: my_gt
-n_bands: 100
-target_bands: 30
-ignored_labels: [0]
-n_classes: 10
-```
-
-2. Run training:
-```bash
-python train.py dataset=my_dataset
-```
-
-### Adding Attention Mechanism
-
-The framework includes a placeholder for attention-based enhancements:
+Modify `configs/config.py` or create custom configurations:
 
 ```python
-from models import PrototypicalNetworkWithAttention
+from configs import ExperimentConfig
 
-model = PrototypicalNetworkWithAttention(
-    backbone=backbone,
-    d_model=128,
-    n_heads=4
-)
+config = ExperimentConfig()
+
+# Data settings
+config.data.n_components = 30          # PCA components
+config.data.patch_size = 9             # 9x9 spatial patches
+config.data.normalization = "minmax"   # or "zscore"
+
+# Few-shot settings
+config.fewshot.n_way = 5               # 5-way classification
+config.fewshot.k_shot = 5              # 5 support samples
+config.fewshot.q_query = 15            # 15 query samples
+
+# Model settings
+config.model.conv_channels = (32, 64, 128)
+config.model.embedding_dim = 256
+
+# Training settings
+config.training.learning_rate = 0.001
+config.training.num_epochs = 50
 ```
 
-Implement custom attention in `src/models/protonet.py`.
+## 🔬 Example Results
 
-## Troubleshooting
-
-### Issue: "CUDA out of memory"
-**Solution**: Reduce batch size or feature dimensions
-```bash
-python train.py training.batch_size=2 model.backbone.d_model=64
+### Indian Pines Dataset (Example)
+```
+Classification Metrics:
+==================================================
+Overall Accuracy (OA): 0.8234 (82.34%)
+Average Accuracy (AA): 0.7956 (79.56%)
+Kappa Coefficient (κ): 0.7845
+==================================================
 ```
 
-### Issue: "Not enough samples for k-shot"
-**Solution**: Use larger train_ratio or smaller k_shot
-```bash
-python train.py data.train_ratio=0.2 few_shot.k_shot=3
-```
+## 🛠️ Advanced Usage
 
-### Issue: "Key not found in .mat file"
-**Solution**: Check the actual keys in your .mat file
+### Custom Datasets
+
+To use with your own HSI data:
+
+1. Ensure `.mat` format with keys for HSI cube and labels
+2. Update `config.data.hsi_key` and `config.data.gt_key`
+3. Adjust `config.data.n_components` based on your spectral bands
+
+### Custom Models
+
+Modify the backbone in `src/models/backbone.py`:
+
 ```python
-import scipy.io
-data = scipy.io.loadmat('your_file.mat')
-print(data.keys())
+# Example: Add more convolutional layers
+config.model.conv_channels = (32, 64, 128, 256)
+config.model.kernel_sizes = ((3,3,3), (3,3,3), (3,3,3), (3,3,3))
 ```
 
-Update `image_key` and `gt_key` in the dataset config accordingly.
+### Checkpointing
 
-## Citation
+Models are automatically saved to `checkpoints/`:
+- `best_model.pt`: Best performing model
+- `model_epoch_N.pt`: Epoch-specific checkpoints
 
-If you use this framework in your research, please cite:
+Load a checkpoint:
 
-```bibtex
-@software{hsi_fewshot_2024,
-  title={Few-Shot Hyperspectral Image Classification Framework},
-  author={Your Name},
-  year={2024},
-  url={https://github.com/yourusername/hsi-fewshot}
-}
+```python
+from src.utils import load_checkpoint
+
+epoch = load_checkpoint(model, optimizer, 'checkpoints/best_model.pt')
 ```
 
-## License
+## 📝 Code Quality
 
-MIT License - see LICENSE file for details
+- **Type Hints**: All functions use Python typing
+- **Docstrings**: Google-style documentation
+- **Error Handling**: Try-except blocks for robustness
+- **Modularity**: Single Responsibility Principle
+- **Reproducibility**: Seed management across all libraries
 
-## Acknowledgments
+## 🧪 Testing the Framework
 
-- Prototypical Networks: Snell et al., 2017
-- 3D-CNN for HSI: Various works on spatial-spectral feature extraction
-- Hydra: Facebook Research for configuration management
+```bash
+# Test without real data (structure validation)
+python main.py
 
-## Contact
+# Test with sample data
+python main.py --data_path data/sample.mat --num_epochs 5
+```
 
-For questions or issues, please open a GitHub issue or contact: your.email@example.com
+## 📚 References
+
+### Key Papers
+
+1. **Prototypical Networks**: Snell et al., "Prototypical Networks for Few-shot Learning", NeurIPS 2017
+2. **3D-CNN for HSI**: Li et al., "Deep Learning for Hyperspectral Image Classification: An Overview", IEEE TGRS 2019
+
+### Datasets
+
+- **Indian Pines**: [Purdue HSI Dataset](http://www.ehu.eus/ccwintco/index.php/Hyperspectral_Remote_Sensing_Scenes)
+- **Pavia University**: IEEE GRSS Data Fusion Contest
+- **Houston**: IEEE GRSS Data Fusion Contest 2013
+
+## 🤝 Contributing
+
+This framework is designed to be extended. Key extension points:
+
+1. **New Backbones**: Add to `src/models/backbone.py`
+2. **New Meta-Learners**: Add to `src/models/`
+3. **New Metrics**: Add to `src/utils/metrics.py`
+4. **Data Augmentation**: Extend `src/data/loader.py`
+
+## 📄 License
+
+This is a research framework. Please cite appropriately if used in publications.
+
+## 🐛 Troubleshooting
+
+**CUDA Out of Memory**:
+```bash
+# Reduce batch size (queries per episode)
+config.fewshot.q_query = 10  # instead of 15
+```
+
+**File Not Found**:
+```bash
+# Verify data path
+ls data/Indian_pines_corrected.mat
+```
+
+**Import Errors**:
+```bash
+# Reinstall dependencies
+pip install -r requirements.txt --upgrade
+```
+
+## 📧 Support
+
+For issues or questions about the framework structure, check:
+1. Type hints and docstrings in the code
+2. Configuration examples in `configs/config.py`
+3. Main pipeline in `main.py`
+
+---
+
+**Built with Clean Architecture principles for production-grade ML research.**

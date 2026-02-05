@@ -1,9 +1,0 @@
-# Indian Pines Dataset Configuration
-file_name: Indian_pines.mat
-gt_name: Indian_pines_gt.mat
-image_key: indian_pines
-gt_key: indian_pines_gt
-n_bands: 200
-target_bands: 30
-ignored_labels: [0]
-n_classes: 16 # Total classes (excluding background)

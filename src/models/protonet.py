@@ -1,177 +1,214 @@
-from typing import Optional, Tuple
+"""Prototypical Network for few-shot classification.
+
+This module implements the Prototypical Network meta-learning algorithm
+for few-shot classification of hyperspectral images.
+"""
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
+from typing import Tuple, Optional
+from .backbone import HSI3DCNN
 
 
 class PrototypicalNetwork(nn.Module):
+    """Prototypical Network for few-shot learning.
+    
+    This network computes class prototypes from support set embeddings
+    and classifies query samples based on their distance to prototypes.
     """
-    Prototypical Network for Few-Shot Classification
-    """
-
-    def __init__(
-        self,
-        backbone: nn.Module,
-        distance_metric: str = "euclidean",
-    ):
-        super().__init__()
+    
+    def __init__(self, backbone: nn.Module):
+        """Initialize the Prototypical Network.
+        
+        Args:
+            backbone: Feature extractor network (e.g., HSI3DCNN).
+        """
+        super(PrototypicalNetwork, self).__init__()
         self.backbone = backbone
-        self.distance_metric = distance_metric.lower()
-
-        if self.distance_metric not in ["euclidean", "cosine"]:
-            raise ValueError(f"Unknown distance metric: {distance_metric}")
-
-        print(f"Initialized ProtoNet with {self.distance_metric} distance.")
-
+    
     def compute_prototypes(
         self,
-        support_features: torch.Tensor,
+        support_embeddings: torch.Tensor,
         support_labels: torch.Tensor,
-        n_way: int,
+        n_way: int
     ) -> torch.Tensor:
-        prototypes = []
+        """Compute class prototypes from support set.
+        
+        Class prototypes are computed as the mean of all support
+        embeddings for each class.
+        
+        Args:
+            support_embeddings: Embeddings of shape (n_support, embedding_dim).
+            support_labels: Labels of shape (n_support,).
+            n_way: Number of classes.
+            
+        Returns:
+            Prototypes of shape (n_way, embedding_dim).
+        """
+        prototypes = torch.zeros(
+            n_way,
+            support_embeddings.size(1),
+            device=support_embeddings.device
+        )
+        
         for class_idx in range(n_way):
+            # Get all embeddings for this class
             class_mask = support_labels == class_idx
-            class_features = support_features[class_mask]
-            # Handle case where a class might be missing in a bad batch
-            if class_features.size(0) == 0:
-                prototype = torch.zeros(support_features.size(1)).to(
-                    support_features.device
-                )
-            else:
-                prototype = class_features.mean(dim=0)
-            prototypes.append(prototype)
-        return torch.stack(prototypes)
-
+            class_embeddings = support_embeddings[class_mask]
+            
+            # Compute mean (prototype)
+            prototypes[class_idx] = class_embeddings.mean(dim=0)
+        
+        return prototypes
+    
     def compute_distances(
         self,
-        query_features: torch.Tensor,
+        query_embeddings: torch.Tensor,
         prototypes: torch.Tensor,
+        distance_metric: str = "euclidean"
     ) -> torch.Tensor:
-        if self.distance_metric == "euclidean":
-            # ||q - p||^2 = ||q||^2 + ||p||^2 - 2qp
-            # More memory efficient implementation
-            n_query = query_features.size(0)
-            n_proto = prototypes.size(0)
-
-            # (n_query, n_proto)
-            dists = torch.cdist(query_features, prototypes, p=2)
-            distances = dists**2
-
-        elif self.distance_metric == "cosine":
-            # Normalize features
-            query_norm = F.normalize(query_features, p=2, dim=1)
-            proto_norm = F.normalize(prototypes, p=2, dim=1)
-
-            # Cosine similarity
-            similarity = torch.mm(query_norm, proto_norm.t())
-
-            # Convert to 'distance' (1 - similarity or negative similarity)
-            # We use negative similarity so that argmax(logits) works same as argmin(distance)
-            distances = 1.0 - similarity
-
+        """Compute distances from query embeddings to prototypes.
+        
+        Args:
+            query_embeddings: Embeddings of shape (n_query, embedding_dim).
+            prototypes: Prototypes of shape (n_way, embedding_dim).
+            distance_metric: Distance metric to use ('euclidean' or 'cosine').
+            
+        Returns:
+            Distance matrix of shape (n_query, n_way).
+        """
+        if distance_metric == "euclidean":
+            # Compute squared Euclidean distances
+            # Using broadcasting: (n_query, 1, dim) - (1, n_way, dim)
+            distances = torch.sum(
+                (query_embeddings.unsqueeze(1) - prototypes.unsqueeze(0)) ** 2,
+                dim=2
+            )
+        elif distance_metric == "cosine":
+            # Compute cosine similarity
+            query_norm = torch.nn.functional.normalize(query_embeddings, p=2, dim=1)
+            proto_norm = torch.nn.functional.normalize(prototypes, p=2, dim=1)
+            distances = -torch.mm(query_norm, proto_norm.t())  # Negative for similarity
+        else:
+            raise ValueError(f"Unknown distance metric: {distance_metric}")
+        
         return distances
-
+    
     def forward(
         self,
-        support_patches: torch.Tensor,
+        support_data: torch.Tensor,
         support_labels: torch.Tensor,
-        query_patches: torch.Tensor,
-        query_labels: Optional[torch.Tensor] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
-        support_features = self.backbone(support_patches)
-        query_features = self.backbone(query_patches)
-
-        n_way = len(torch.unique(support_labels))
-        prototypes = self.compute_prototypes(support_features, support_labels, n_way)
-        distances = self.compute_distances(query_features, prototypes)
+        query_data: torch.Tensor,
+        n_way: int,
+        distance_metric: str = "euclidean"
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Forward pass for an episode.
+        
+        Args:
+            support_data: Support set data of shape (n_support, C, D, H, W).
+            support_labels: Support labels of shape (n_support,).
+            query_data: Query set data of shape (n_query, C, D, H, W).
+            n_way: Number of classes in this episode.
+            distance_metric: Distance metric to use.
+            
+        Returns:
+            Tuple of (logits, prototypes):
+                - logits: Classification scores of shape (n_query, n_way).
+                - prototypes: Class prototypes of shape (n_way, embedding_dim).
+        """
+        # Extract features for support set
+        support_embeddings = self.backbone(support_data)
+        
+        # Extract features for query set
+        query_embeddings = self.backbone(query_data)
+        
+        # Compute class prototypes
+        prototypes = self.compute_prototypes(support_embeddings, support_labels, n_way)
+        
+        # Compute distances (negative distances as logits)
+        distances = self.compute_distances(query_embeddings, prototypes, distance_metric)
+        
+        # Convert distances to logits (negative distances for softmax)
         logits = -distances
-        predictions = torch.argmax(logits, dim=1)
-
-        loss = None
-        if query_labels is not None:
-            loss = F.cross_entropy(logits, query_labels)
-
-        return logits, loss, predictions
-
-
-class SEBlock(nn.Module):
-    """Squeeze-and-Excitation Block for Spectral Attention"""
-
-    def __init__(self, channels: int, reduction: int = 4):
-        super().__init__()
-        self.fc1 = nn.Linear(channels, channels // reduction, bias=False)
-        self.relu = nn.ReLU()
-        self.fc2 = nn.Linear(channels // reduction, channels, bias=False)
-        self.sigmoid = nn.Sigmoid()
-
-    def forward(self, x):
-        # x: (B, C) - Features are already global pooled in backbone
-        y = self.fc1(x)
-        y = self.relu(y)
-        y = self.fc2(y)
-        y = self.sigmoid(y)
-        return x * y
-
-
-class PrototypicalNetworkWithAttention(PrototypicalNetwork):
-    """
-    Enhanced Prototypical Network with:
-    1. Spectral Attention (SE Block) on extracted features.
-    2. Self-Attention on support features to refine prototypes.
-    """
-
-    def __init__(
+        
+        return logits, prototypes
+    
+    def predict(
         self,
-        backbone: nn.Module,
-        d_model: int,
-        n_heads: int = 4,
-        distance_metric: str = "euclidean",
-    ):
-        super().__init__(backbone, distance_metric)
-
-        # 1. Spectral Attention (Feature Refinement)
-        self.se_block = SEBlock(d_model)
-
-        # 2. Self-Attention for Support Set
-        self.support_attention = nn.MultiheadAttention(
-            embed_dim=d_model, num_heads=n_heads, batch_first=True
-        )
-        self.ln = nn.LayerNorm(d_model)
-
-    def forward(
-        self,
-        support_patches: torch.Tensor,
+        support_data: torch.Tensor,
         support_labels: torch.Tensor,
-        query_patches: torch.Tensor,
-        query_labels: Optional[torch.Tensor] = None,
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        # 1. Extract Features
-        support_features = self.backbone(support_patches)  # (N_sup, d)
-        query_features = self.backbone(query_patches)  # (N_qry, d)
+        query_data: torch.Tensor,
+        n_way: int,
+        distance_metric: str = "euclidean"
+    ) -> torch.Tensor:
+        """Predict class labels for query samples.
+        
+        Args:
+            support_data: Support set data.
+            support_labels: Support labels.
+            query_data: Query set data.
+            n_way: Number of classes.
+            distance_metric: Distance metric to use.
+            
+        Returns:
+            Predicted class labels of shape (n_query,).
+        """
+        with torch.no_grad():
+            logits, _ = self.forward(
+                support_data, support_labels, query_data, n_way, distance_metric
+            )
+            predictions = torch.argmax(logits, dim=1)
+        
+        return predictions
+    
+    def extract_features(self, data: torch.Tensor) -> torch.Tensor:
+        """Extract features using the backbone.
+        
+        Args:
+            data: Input data of shape (B, C, D, H, W).
+            
+        Returns:
+            Features of shape (B, embedding_dim).
+        """
+        return self.backbone(data)
 
-        # 2. Apply Spectral Attention (Refine individual features)
-        support_features = self.se_block(support_features)
-        query_features = self.se_block(query_features)
 
-        # 3. Apply Self-Attention to Support Set (Contextualize)
-        # Reshape for Attention: (1, N_sup, d) treating the set as a sequence
-        sup_feat_seq = support_features.unsqueeze(0)
-
-        attn_out, _ = self.support_attention(sup_feat_seq, sup_feat_seq, sup_feat_seq)
-        # Residual + Norm
-        support_features = self.ln(support_features + attn_out.squeeze(0))
-
-        # 4. Standard ProtoNet Flow
-        n_way = len(torch.unique(support_labels))
-        prototypes = self.compute_prototypes(support_features, support_labels, n_way)
-        distances = self.compute_distances(query_features, prototypes)
-        logits = -distances
-        predictions = torch.argmax(logits, dim=1)
-
-        loss = None
-        if query_labels is not None:
-            loss = F.cross_entropy(logits, query_labels)
-
-        return logits, loss, predictions
+def build_prototypical_network(
+    input_channels: int = 1,
+    spectral_depth: int = 30,
+    spatial_size: int = 9,
+    conv_channels: Tuple[int, ...] = (32, 64, 128),
+    kernel_sizes: Tuple[Tuple[int, int, int], ...] = ((3, 3, 3), (3, 3, 3), (3, 3, 3)),
+    pool_sizes: Tuple[Tuple[int, int, int], ...] = ((2, 2, 2), (2, 2, 2), (2, 2, 2)),
+    embedding_dim: int = 256,
+    dropout_rate: float = 0.3
+) -> PrototypicalNetwork:
+    """Build a complete Prototypical Network with HSI3DCNN backbone.
+    
+    Args:
+        input_channels: Number of input channels.
+        spectral_depth: Spectral dimension after PCA.
+        spatial_size: Spatial size of patches.
+        conv_channels: Channels for conv layers.
+        kernel_sizes: Kernel sizes for conv layers.
+        pool_sizes: Pool sizes for conv layers.
+        embedding_dim: Embedding dimension.
+        dropout_rate: Dropout rate.
+        
+    Returns:
+        PrototypicalNetwork instance.
+    """
+    backbone = HSI3DCNN(
+        input_channels=input_channels,
+        spectral_depth=spectral_depth,
+        spatial_size=spatial_size,
+        conv_channels=conv_channels,
+        kernel_sizes=kernel_sizes,
+        pool_sizes=pool_sizes,
+        embedding_dim=embedding_dim,
+        dropout_rate=dropout_rate
+    )
+    
+    model = PrototypicalNetwork(backbone)
+    
+    return model

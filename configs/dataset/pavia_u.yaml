@@ -1,9 +1,0 @@
-# Pavia University Dataset Configuration
-file_name: PaviaU.mat
-gt_name: PaviaU_gt.mat
-image_key: paviaU
-gt_key: paviaU_gt
-n_bands: 103
-target_bands: 30
-ignored_labels: [0]
-n_classes: 9  # Total classes (excluding background)

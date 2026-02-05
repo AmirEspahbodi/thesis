@@ -1,10 +1,11 @@
-from src.models.backbone import ResidualBlock3D, Simple3DCNN, count_parameters
-from src.models.protonet import PrototypicalNetwork, PrototypicalNetworkWithAttention
+"""Models module for HSI few-shot learning."""
+
+from .backbone import HSI3DCNN, Conv3DBlock
+from .protonet import PrototypicalNetwork, build_prototypical_network
 
 __all__ = [
-    "Simple3DCNN",
-    "ResidualBlock3D",
-    "count_parameters",
-    "PrototypicalNetwork",
-    "PrototypicalNetworkWithAttention",
+    'HSI3DCNN',
+    'Conv3DBlock',
+    'PrototypicalNetwork',
+    'build_prototypical_network'
 ]

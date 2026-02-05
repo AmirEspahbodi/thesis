@@ -1,9 +1,0 @@
-# Houston 2013 Dataset Configuration
-file_name: Houston13.mat
-gt_name: Houston13_7gt.mat
-image_key: ori_data
-gt_key: map
-n_bands: 144
-target_bands: 30
-ignored_labels: [0]
-n_classes: 15 # Total classes (excluding background)

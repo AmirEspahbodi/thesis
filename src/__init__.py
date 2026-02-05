@@ -1,3 +1,8 @@
-"""HSI Few-Shot Learning Framework"""
+"""Source code package for HSI few-shot learning."""
 
-__version__ = "1.0.0"
+from . import data
+from . import models
+from . import utils
+from . import training
+
+__all__ = ['data', 'models', 'utils', 'training']
