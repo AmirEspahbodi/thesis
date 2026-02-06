@@ -1,19 +1,70 @@
 """3D-CNN backbone for hyperspectral image feature extraction.
 
-This module implements a 3D convolutional neural network optimized for
-extracting spatial-spectral features from HSI patches.
+This module implements a Residual 3D convolutional neural network with
+Squeeze-and-Excitation (SE) attention, optimized for extracting
+spatial-spectral features from HSI patches.
 """
 
-from typing import List, Tuple
+from typing import Optional, Tuple
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
-class Conv3DBlock(nn.Module):
-    """3D Convolutional block with BatchNorm, ReLU, and Pooling.
+class SEBlock3D(nn.Module):
+    """Squeeze-and-Excitation Block for 3D data.
 
-    This building block is used to construct the 3D-CNN backbone.
+    Performs channel-wise recalibration of feature maps.
+    Structure: Global Avg Pool -> Reduce -> ReLU -> Expand -> Sigmoid -> Scale.
+    """
+
+    def __init__(self, channels: int, reduction: int = 16):
+        """Initialize the SE Block.
+
+        Args:
+            channels: Number of input channels.
+            reduction: Reduction ratio for the bottleneck in excitation.
+        """
+        super(SEBlock3D, self).__init__()
+
+        # Ensure hidden channels is at least 1
+        mid_channels = max(1, channels // reduction)
+
+        self.avg_pool = nn.AdaptiveAvgPool3d(1)
+        self.fc = nn.Sequential(
+            nn.Linear(channels, mid_channels, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(mid_channels, channels, bias=False),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Forward pass through SE block.
+
+        Args:
+            x: Input tensor of shape (B, C, D, H, W).
+
+        Returns:
+            Recalibrated tensor of same shape.
+        """
+        b, c, _, _, _ = x.size()
+
+        # Squeeze: Global Average Pooling -> (B, C, 1, 1, 1) -> (B, C)
+        y = self.avg_pool(x).view(b, c)
+
+        # Excitation: FC -> ReLU -> FC -> Sigmoid -> (B, C) -> (B, C, 1, 1, 1)
+        y = self.fc(y).view(b, c, 1, 1, 1)
+
+        # Scale: Element-wise multiplication
+        return x * y.expand_as(x)
+
+
+class ResidualSEBlock(nn.Module):
+    """Residual 3D Block with SE Attention.
+
+    Structure:
+    Input -> [Conv3D -> BN -> SE] + [Skip Connection] -> ReLU -> MaxPool -> Dropout
     """
 
     def __init__(
@@ -23,8 +74,9 @@ class Conv3DBlock(nn.Module):
         kernel_size: Tuple[int, int, int] = (3, 3, 3),
         pool_size: Tuple[int, int, int] = (2, 2, 2),
         dropout_rate: float = 0.3,
+        reduction: int = 16,
     ):
-        """Initialize the 3D conv block.
+        """Initialize the Residual SE Block.
 
         Args:
             in_channels: Number of input channels.
@@ -32,12 +84,15 @@ class Conv3DBlock(nn.Module):
             kernel_size: Size of the convolutional kernel.
             pool_size: Size of the pooling window.
             dropout_rate: Dropout probability.
+            reduction: SE block reduction ratio.
         """
-        super(Conv3DBlock, self).__init__()
+        super(ResidualSEBlock, self).__init__()
 
         # Calculate padding to maintain spatial dimensions before pooling
+        # Padding = kernel_size // 2 assures 'same' padding for odd kernels
         padding = tuple(k // 2 for k in kernel_size)
 
+        # Main convolutional branch
         self.conv = nn.Conv3d(
             in_channels,
             out_channels,
@@ -46,32 +101,58 @@ class Conv3DBlock(nn.Module):
             bias=False,
         )
         self.bn = nn.BatchNorm3d(out_channels)
+
+        # Squeeze-and-Excitation Attention
+        self.se = SEBlock3D(out_channels, reduction=reduction)
+
+        # Shortcut/Skip connection branch
+        # If dimensions change (channel count), use 1x1x1 convolution to match
+        if in_channels != out_channels:
+            self.shortcut = nn.Sequential(
+                nn.Conv3d(in_channels, out_channels, kernel_size=1, bias=False),
+                nn.BatchNorm3d(out_channels),
+            )
+        else:
+            self.shortcut = nn.Identity()
+
+        # Activation and regularization
         self.relu = nn.ReLU(inplace=True)
         self.pool = nn.MaxPool3d(kernel_size=pool_size, stride=pool_size)
         self.dropout = nn.Dropout3d(p=dropout_rate)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass through the conv block.
+        """Forward pass through the residual block.
 
         Args:
             x: Input tensor of shape (B, C, D, H, W).
 
         Returns:
-            Output tensor after convolution, normalization, activation, and pooling.
+            Output tensor.
         """
-        x = self.conv(x)
-        x = self.bn(x)
-        x = self.relu(x)
-        x = self.pool(x)
-        x = self.dropout(x)
-        return x
+        # Main branch
+        out = self.conv(x)
+        out = self.bn(out)
+        out = self.se(out)  # Apply attention before addition
+
+        # Residual connection
+        residual = self.shortcut(x)
+        out += residual
+
+        # Activation
+        out = self.relu(out)
+
+        # Pooling and Dropout (performed after the residual block logic)
+        out = self.pool(out)
+        out = self.dropout(out)
+
+        return out
 
 
 class HSI3DCNN(nn.Module):
-    """3D-CNN backbone for HSI feature extraction.
+    """Residual 3D-CNN backbone for HSI feature extraction.
 
-    This network processes 3D spatial-spectral patches and produces
-    fixed-dimensional embedding vectors.
+    This network processes 3D spatial-spectral patches using residual blocks
+    with attention mechanisms and produces fixed-dimensional embedding vectors.
     """
 
     def __init__(
@@ -93,7 +174,7 @@ class HSI3DCNN(nn.Module):
         embedding_dim: int = 256,
         dropout_rate: float = 0.3,
     ):
-        """Initialize the 3D-CNN backbone.
+        """Initialize the Residual 3D-CNN backbone.
 
         Args:
             input_channels: Number of input channels (typically 1 for HSI).
@@ -112,21 +193,23 @@ class HSI3DCNN(nn.Module):
         self.spatial_size = spatial_size
         self.embedding_dim = embedding_dim
 
-        # Build convolutional layers
+        # Build residual layers
         layers = []
         in_ch = input_channels
 
         for i, out_ch in enumerate(conv_channels):
+            # Safe indexing for kernels and pools in case lists are shorter than channels
             kernel_size = kernel_sizes[i] if i < len(kernel_sizes) else (3, 3, 3)
             pool_size = pool_sizes[i] if i < len(pool_sizes) else (2, 2, 2)
 
             layers.append(
-                Conv3DBlock(
-                    in_ch,
-                    out_ch,
+                ResidualSEBlock(
+                    in_channels=in_ch,
+                    out_channels=out_ch,
                     kernel_size=kernel_size,
                     pool_size=pool_size,
                     dropout_rate=dropout_rate,
+                    reduction=16,
                 )
             )
             in_ch = out_ch
@@ -191,7 +274,7 @@ class HSI3DCNN(nn.Module):
         Returns:
             Embedding tensor of shape (B, embedding_dim).
         """
-        # Pass through convolutional layers
+        # Pass through residual convolutional layers
         x = self.conv_layers(x)
 
         # Flatten
@@ -200,7 +283,8 @@ class HSI3DCNN(nn.Module):
         # Pass through FC layers
         x = self.fc_layers(x)
 
-        x = torch.nn.functional.normalize(x, p=2, dim=1)
+        # L2 Normalization for metric learning stability
+        x = F.normalize(x, p=2, dim=1)
 
         return x
 
