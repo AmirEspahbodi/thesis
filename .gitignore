@@ -178,3 +178,6 @@ pyrightconfig.json
 
 # End of https://www.toptal.com/developers/gitignore/api/python
 verify_all_fixes.py
+
+/logs
+/results
